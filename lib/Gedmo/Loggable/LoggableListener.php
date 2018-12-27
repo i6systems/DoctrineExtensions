@@ -227,10 +227,11 @@ class LoggableListener extends MappedEventSubscriber
      * @param LoggableAdapter $ea
      * @param object $object
      * @param object $logEntry
+     * @param string $action
      *
      * @return array
      */
-    protected function getObjectChangeSetData($ea, $object, $logEntry)
+    protected function getObjectChangeSetData($ea, $object, $logEntry, $action)
     {
         $om        = $ea->getObjectManager();
         $wrapped   = AbstractWrapper::wrap($object, $om);
@@ -247,13 +248,22 @@ class LoggableListener extends MappedEventSubscriber
             if (method_exists($meta, 'isCollectionValuedEmbed') && $meta->isCollectionValuedEmbed($field) && $value) {
                 $embedValues = array();
                 foreach ($value as $embedValue) {
-                    $embedValues[] = $this->getObjectChangeSetData($ea, $embedValue, $logEntry);
+                    $value = $this->getObjectChangeSetData($ea, $embedValue, $logEntry, $action);
+                    if($action === self::ACTION_UPDATE && 0 === count($value)) {
+                        continue;
+                    }
+                    $embedValues[] = $value;
+                }
+                if($action === self::ACTION_UPDATE && 0 === count($embedValues)) {
+                    continue;
                 }
                 $value = $embedValues;
-            }
-            if ($meta->isSingleValuedAssociation($field) && $value) {
+            } elseif ($meta->isSingleValuedAssociation($field) && $value) {
                 if ($wrapped->isEmbeddedAssociation($field)) {
-                    $value = $this->getObjectChangeSetData($ea, $value, $logEntry);
+                    $value = $this->getObjectChangeSetData($ea, $value, $logEntry, $action);
+                    if($action === self::ACTION_UPDATE && 0 === count($value)) {
+                        continue;
+                    }
                 } else {
                     $oid          = spl_object_hash($value);
                     $wrappedAssoc = AbstractWrapper::wrap($value, $om);
@@ -312,7 +322,7 @@ class LoggableListener extends MappedEventSubscriber
             }
             $newValues = array();
             if ($action !== self::ACTION_REMOVE && isset($config['versioned'])) {
-                $newValues = $this->getObjectChangeSetData($ea, $object, $logEntry);
+                $newValues = $this->getObjectChangeSetData($ea, $object, $logEntry, $action);
                 $logEntry->setData($newValues);
             }
 
