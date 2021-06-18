@@ -60,24 +60,31 @@ class Annotation extends AbstractAnnotationDriver
 
         // property annotations
         foreach ($class->getProperties() as $property) {
-            $field = $property->getName();
-            if ($meta->isMappedSuperclass && !$property->isPrivate()) {
+            if ($meta->isMappedSuperclass && !$property->isPrivate() ||
+                $meta->isInheritedField($property->name) ||
+                isset($meta->associationMappings[$property->name]['inherited'])
+            ) {
                 continue;
             }
 
             // versioned property
             if ($this->reader->getPropertyAnnotation($property, self::VERSIONED)) {
-                if (!$this->isMappingValid($meta, $field)) {
-                    throw new InvalidMappingException("Cannot apply versioning to field [{$field}] as it is collection in object - {$meta->name}");
+                $field = $property->getName();
+
+                $isEmbedMany = false;
+                if (method_exists($meta, 'isCollectionValuedEmbed')) {
+                    $isEmbedMany = $meta->isCollectionValuedEmbed($field);
+                }
+
+                if ($meta->isCollectionValuedAssociation($field) && !$isEmbedMany) {
+                    throw new InvalidMappingException("Cannot versioned [{$field}] as it is collection in object - {$meta->name}");
                 }
                 if (isset($meta->embeddedClasses[$field])) {
                     $this->inspectEmbeddedForVersioned($field, $config, $meta);
                     continue;
                 }
                 // fields cannot be overrided and throws mapping exception
-                if (!(isset($config['versioned']) && in_array($field, $config['versioned']))) {
-                    $config['versioned'][] = $field;
-                }
+                $config['versioned'][] = $field;
             }
         }
 
@@ -92,7 +99,8 @@ class Annotation extends AbstractAnnotationDriver
     }
 
     /**
-     * @param string $field
+     * @param ClassMetadata $meta
+     * @param string        $field
      *
      * @return bool
      */
@@ -102,6 +110,9 @@ class Annotation extends AbstractAnnotationDriver
     }
 
     /**
+     * @param ClassMetadata $meta
+     * @param array         $config
+     *
      * @return bool
      */
     protected function isClassAnnotationInValid(ClassMetadata $meta, array &$config)
@@ -113,8 +124,10 @@ class Annotation extends AbstractAnnotationDriver
      * Searches properties of embedded object for versioned fields
      *
      * @param string $field
+     * @param array $config
+     * @param \Doctrine\ORM\Mapping\ClassMetadata $meta
      */
-    private function inspectEmbeddedForVersioned($field, array &$config, \Doctrine\ORM\Mapping\ClassMetadata $meta)
+    private function inspectEmbeddedForVersioned($field, array &$config, ClassMetadata $meta)
     {
         $сlass = new \ReflectionClass($meta->embeddedClasses[$field]['class']);
 
