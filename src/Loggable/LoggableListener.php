@@ -92,6 +92,7 @@ class LoggableListener extends MappedEventSubscriber
     /**
      * Get the LogEntry class
      *
+     * @param LoggableAdapter $ea
      * @param string $class
      *
      * @return string
@@ -106,6 +107,8 @@ class LoggableListener extends MappedEventSubscriber
     /**
      * Maps additional metadata
      *
+     * @param EventArgs $eventArgs
+     *
      * @return void
      */
     public function loadClassMetadata(EventArgs $eventArgs)
@@ -117,6 +120,8 @@ class LoggableListener extends MappedEventSubscriber
     /**
      * Checks for inserted object to update its logEntry
      * foreign key
+     *
+     * @param EventArgs $args
      *
      * @return void
      */
@@ -146,7 +151,6 @@ class LoggableListener extends MappedEventSubscriber
             $identifiers = $wrapped->getIdentifier(false);
             foreach ($this->pendingRelatedObjects[$oid] as $props) {
                 $logEntry = $props['log'];
-                $logEntryMeta = $om->getClassMetadata(get_class($logEntry));
                 $oldData = $data = $logEntry->getData();
                 $data[$props['field']] = $identifiers;
 
@@ -175,6 +179,8 @@ class LoggableListener extends MappedEventSubscriber
     /**
      * Looks for loggable objects being inserted or updated
      * for further processing
+     *
+     * @param EventArgs $eventArgs
      *
      * @return void
      */
@@ -207,12 +213,13 @@ class LoggableListener extends MappedEventSubscriber
      * Returns an objects changeset data
      *
      * @param LoggableAdapter $ea
-     * @param object          $object
-     * @param object          $logEntry
+     * @param object $object
+     * @param object $logEntry
+     * @param string $action
      *
      * @return array
      */
-    protected function getObjectChangeSetData($ea, $object, $logEntry)
+    protected function getObjectChangeSetData($ea, $object, $logEntry, $action)
     {
         $om = $ea->getObjectManager();
         $wrapped = AbstractWrapper::wrap($object, $om);
@@ -226,9 +233,25 @@ class LoggableListener extends MappedEventSubscriber
                 continue;
             }
             $value = $changes[1];
-            if ($meta->isSingleValuedAssociation($field) && $value) {
+            if (method_exists($meta, 'isCollectionValuedEmbed') && $meta->isCollectionValuedEmbed($field) && $value) {
+                $embedValues = array();
+                foreach ($value as $embedValue) {
+                    $value = $this->getObjectChangeSetData($ea, $embedValue, $logEntry, $action);
+                    if($action === self::ACTION_UPDATE && 0 === count($value)) {
+                        continue;
+                    }
+                    $embedValues[] = $value;
+                }
+                if($action === self::ACTION_UPDATE && 0 === count($embedValues)) {
+                    continue;
+                }
+                $value = $embedValues;
+            } elseif ($meta->isSingleValuedAssociation($field) && $value) {
                 if ($wrapped->isEmbeddedAssociation($field)) {
-                    $value = $this->getObjectChangeSetData($ea, $value, $logEntry);
+                    $value = $this->getObjectChangeSetData($ea, $value, $logEntry, $action);
+                    if($action === self::ACTION_UPDATE && 0 === count($value)) {
+                        continue;
+                    }
                 } else {
                     $oid = spl_object_hash($value);
                     $wrappedAssoc = AbstractWrapper::wrap($value, $om);
@@ -250,8 +273,9 @@ class LoggableListener extends MappedEventSubscriber
     /**
      * Create a new Log instance
      *
-     * @param string $action
-     * @param object $object
+     * @param string          $action
+     * @param object          $object
+     * @param LoggableAdapter $ea
      *
      * @return \Gedmo\Loggable\Entity\MappedSuperclass\AbstractLogEntry|null
      */
@@ -286,7 +310,7 @@ class LoggableListener extends MappedEventSubscriber
             }
             $newValues = [];
             if (self::ACTION_REMOVE !== $action && isset($config['versioned'])) {
-                $newValues = $this->getObjectChangeSetData($ea, $object, $logEntry);
+                $newValues = $this->getObjectChangeSetData($ea, $object, $logEntry, $action);
                 $logEntry->setData($newValues);
             }
 
